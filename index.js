@@ -1,8 +1,12 @@
 import baileys, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys'
 import qrcode from 'qrcode-terminal'
 import fs from 'fs'
+import http from 'http'
 
 const { makeWASocket } = baileys
+
+// Servidor KeepAlive para evitar que Railway/Render duerma el proceso
+http.createServer((req, res) => res.end('Bot activo')).listen(process.env.PORT || 3000);
 
 async function connectBot() {
   let { state, saveCreds } = await useMultiFileAuthState('./session')
@@ -12,7 +16,6 @@ async function connectBot() {
   const startSock = () => {
     sock = makeWASocket({ auth: state })
 
-    // Eventos de conexión
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
 
@@ -40,25 +43,15 @@ async function connectBot() {
           sock._qrShown = false
           startSock()
         } else {
-          console.log('Intentando reconexión en 5 segundos...')
+          console.log('Error de stream, reintentando en 10s...')
           sock._qrShown = false
-          setTimeout(() => startSock(), 5000)
+          setTimeout(() => startSock(), 10000)
         }
       }
     })
 
-    // Guardar credenciales en cada actualización
     sock.ev.on('creds.update', saveCreds)
 
-    // Mantener conexión activa cada 30 segundos
-    setInterval(() => {
-      if (sock?.ws?.readyState === 1) {
-        sock.sendPresenceUpdate('available')
-        console.log("Keep-alive enviado")
-      }
-    }, 30000)
-
-    // Manejo de mensajes entrantes
     sock.ev.on('messages.upsert', async (m) => {
       const msg = m.messages[0]
       if (msg.key.fromMe) return
@@ -77,7 +70,7 @@ async function connectBot() {
 
       const session = userSessions[from]
 
-      switch (session.step) {
+      switch(session.step) {
         case 0:
           session.data.consulta = text
           session.step++
@@ -88,12 +81,10 @@ async function connectBot() {
           session.step++
           await sock.sendMessage(from, { text: '¿Qué día y hora deseas tu cita?' })
           break
-        case 2:
+        case 2: 
           session.data.fechaHora = text
           session.step++
-          await sock.sendMessage(from, {
-            text: `Perfecto, ${session.data.nombre}. Entonces tu solicitud es: "${session.data.consulta}" para ${session.data.fechaHora}.\n¿Es correcta la información? (sí/no)`
-          })
+          await sock.sendMessage(from, { text: `Perfecto, ${session.data.nombre}. Entonces tu solicitud es: "${session.data.consulta}" para ${session.data.fechaHora}.\n¿Es correcta la información? (sí/no)` })
           break
         case 3:
           if (text.toLowerCase() === 'sí' || text.toLowerCase() === 'si') {
@@ -109,6 +100,14 @@ async function connectBot() {
   }
 
   startSock()
+
+  // Mantener la conexión WebSocket viva
+  setInterval(() => {
+    if (sock?.ws?.readyState === 1) {
+      sock.ws.ping()
+      console.log('Ping enviado para mantener conexión')
+    }
+  }, 20000)
 }
 
 connectBot()
