@@ -15,6 +15,7 @@ async function connectBot() {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
 
+      // Mostrar QR solo una vez
       if (qr && !sock._qrShown) {
         sock._qrShown = true
         console.log('Escanea este QR con WhatsApp:')
@@ -29,15 +30,25 @@ async function connectBot() {
         const reason = lastDisconnect?.error?.output?.statusCode
 
         if (reason === DisconnectReason.loggedOut) {
-          console.log('Sesión cerrada desde el celular. Borrando credenciales y esperando nuevo QR...')
-          fs.rmSync('./session', { recursive: true, force: true })
+          // Ver cuántas conexiones (archivos de sesión) existen
+          const files = fs.readdirSync('./session').filter(f => f.endsWith('.json'))
 
-          // Re-inicializar el estado y reconectar
-          const newAuth = await useMultiFileAuthState('./session')
-          state = newAuth.state
-          saveCreds = newAuth.saveCreds
-          sock._qrShown = false
-          startSock()
+          if (files.length > 1) {
+            console.log('Más de una sesión detectada. Eliminando credenciales y esperando nuevo QR...')
+            fs.rmSync('./session', { recursive: true, force: true })
+
+            // Re-inicializar estado y reconectar
+            const newAuth = await useMultiFileAuthState('./session')
+            state = newAuth.state
+            saveCreds = newAuth.saveCreds
+            sock._qrShown = false
+            startSock()
+          } else {
+            console.log('Solo hay una sesión, no se eliminará.')
+            sock._qrShown = false
+            startSock()
+          }
+
         } else {
           console.log('Reconectando...')
           sock._qrShown = false
@@ -48,6 +59,7 @@ async function connectBot() {
 
     sock.ev.on('creds.update', saveCreds)
 
+    // Gestión de mensajes entrantes
     sock.ev.on('messages.upsert', async (m) => {
       const msg = m.messages[0]
       if (msg.key.fromMe) return
