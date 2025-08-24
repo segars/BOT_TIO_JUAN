@@ -7,11 +7,21 @@ const { makeWASocket } = baileys
 async function connectBot() {
   let { state, saveCreds } = await useMultiFileAuthState('./session')
   let sock
-  let reconnecting = false
   const userSessions = {}
 
   const startSock = () => {
+    if (sock) {
+      try { sock.end() } catch (e) {}
+    }
+
     sock = makeWASocket({ auth: state })
+
+    // Mantener sesión activa (ping cada 30s)
+    setInterval(() => {
+      if (sock?.ws?.readyState === 1) {
+        sock.sendPresenceUpdate('available')
+      }
+    }, 30000)
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
@@ -28,25 +38,15 @@ async function connectBot() {
 
       if (connection === 'close') {
         const reason = lastDisconnect?.error?.output?.statusCode
+        console.log('Conexión cerrada. Razón:', reason)
 
-        if (!reconnecting) {
-          reconnecting = true
-          sock.end()
-
-          if (reason === DisconnectReason.loggedOut) {
-            console.log('Sesión cerrada desde el celular. Eliminando credenciales...')
-            fs.rmSync('./session', { recursive: true, force: true })
-            const newAuth = await useMultiFileAuthState('./session')
-            state = newAuth.state
-            saveCreds = newAuth.saveCreds
-          }
-
-          console.log('Reconectando en 3 segundos...')
-          setTimeout(() => {
-            reconnecting = false
-            sock._qrShown = false
-            startSock()
-          }, 3000)
+        if (reason === DisconnectReason.loggedOut) {
+          console.log('Sesión cerrada desde el celular. Eliminando credenciales...')
+          fs.rmSync('./session', { recursive: true, force: true })
+          process.exit(0) // Evita bucles infinitos, requiere reinicio manual
+        } else {
+          console.log('Reconectando en 5s...')
+          setTimeout(startSock, 5000)
         }
       }
     })
@@ -71,7 +71,7 @@ async function connectBot() {
 
       const session = userSessions[from]
 
-      switch (session.step) {
+      switch(session.step) {
         case 0:
           session.data.consulta = text
           session.step++
@@ -82,12 +82,10 @@ async function connectBot() {
           session.step++
           await sock.sendMessage(from, { text: '¿Qué día y hora deseas tu cita?' })
           break
-        case 2:
+        case 2: 
           session.data.fechaHora = text
           session.step++
-          await sock.sendMessage(from, {
-            text: `Perfecto, ${session.data.nombre}. Entonces tu solicitud es: "${session.data.consulta}" para ${session.data.fechaHora}.\n¿Es correcta la información? (sí/no)`
-          })
+          await sock.sendMessage(from, { text: `Perfecto, ${session.data.nombre}. Entonces tu solicitud es: "${session.data.consulta}" para ${session.data.fechaHora}.\n¿Es correcta la información? (sí/no)` })
           break
         case 3:
           if (text.toLowerCase() === 'sí' || text.toLowerCase() === 'si') {
@@ -98,15 +96,6 @@ async function connectBot() {
             userSessions[from] = { step: 0, data: {} }
           }
           break
-      }
-    })
-
-    // Manejo adicional si el WebSocket se cierra inesperadamente
-    sock.ws.on('close', () => {
-      if (!reconnecting) {
-        console.log('WebSocket cerrado inesperadamente, reiniciando...')
-        sock.end()
-        setTimeout(startSock, 5000)
       }
     })
   }
