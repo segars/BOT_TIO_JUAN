@@ -15,8 +15,6 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "express": "^4.19.2",
-    "qrcode": "^1.5.3",
     "@adiwajshing/baileys": "^5.0.0",
     "@whiskeysockets/baileys": "^6.7.18",
     "qrcode-terminal": "^0.12.0"
