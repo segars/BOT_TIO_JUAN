@@ -10,7 +10,7 @@ async function connectBot() {
   const userSessions = {}
 
   const startSock = () => {
-    sock = makeWASocket({ auth: state, printQRInTerminal: false })
+    sock = makeWASocket({ auth: state })
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
@@ -32,6 +32,7 @@ async function connectBot() {
           console.log('Sesión cerrada desde el celular. Borrando credenciales y esperando nuevo QR...')
           fs.rmSync('./session', { recursive: true, force: true })
 
+          // Re-inicializar el estado y reconectar
           const newAuth = await useMultiFileAuthState('./session')
           state = newAuth.state
           saveCreds = newAuth.saveCreds
@@ -49,22 +50,12 @@ async function connectBot() {
 
     sock.ev.on('messages.upsert', async (m) => {
       const msg = m.messages[0]
-      if (!msg.message || msg.key.fromMe) return
+      if (msg.key.fromMe) return
 
       const from = msg.key.remoteJid
+      const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text
+      if (!text) return
 
-      // **NUEVA FUNCIÓN PARA LEER TODOS LOS TIPOS DE MENSAJES DE TEXTO**
-      const text = msg.message.conversation
-        || msg.message.extendedTextMessage?.text
-        || msg.message?.ephemeralMessage?.message?.conversation
-        || msg.message?.viewOnceMessage?.message?.conversation
-        || msg.message?.viewOnceMessageV2?.message?.conversation
-        || msg.message?.ephemeralMessage?.message?.extendedTextMessage?.text
-        || ''
-
-      if (!text.trim()) return
-
-      // INICIO DE LA CONVERSACIÓN
       if (!userSessions[from]) {
         userSessions[from] = { step: 0, data: {} }
         await sock.sendMessage(from, {
@@ -81,19 +72,16 @@ async function connectBot() {
           session.step++
           await sock.sendMessage(from, { text: '¡Perfecto! Ahora, por favor dime tu nombre:' })
           break
-
         case 1:
           session.data.nombre = text
           session.step++
           await sock.sendMessage(from, { text: '¿Qué día y hora deseas tu cita?' })
           break
-
         case 2: 
           session.data.fechaHora = text
           session.step++
           await sock.sendMessage(from, { text: `Perfecto, ${session.data.nombre}. Entonces tu solicitud es: "${session.data.consulta}" para ${session.data.fechaHora}.\n¿Es correcta la información? (sí/no)` })
           break
-
         case 3:
           if (text.toLowerCase() === 'sí' || text.toLowerCase() === 'si') {
             await sock.sendMessage(from, { text: '¡Gracias! Hemos registrado tu solicitud. Nos pondremos en contacto contigo pronto ✨' })
