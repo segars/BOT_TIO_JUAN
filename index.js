@@ -10,26 +10,18 @@ async function connectBot() {
   const userSessions = {}
 
   const startSock = () => {
-    if (sock) {
-      try { sock.end() } catch (e) {}
-    }
-
     sock = makeWASocket({ auth: state })
-
-    // Mantener sesión activa (ping cada 30s)
-    setInterval(() => {
-      if (sock?.ws?.readyState === 1) {
-        sock.sendPresenceUpdate('available')
-      }
-    }, 30000)
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
 
+      // Mostrar QR siempre en una sola línea
       if (qr && !sock._qrShown) {
         sock._qrShown = true
-        console.log('Escanea este QR con WhatsApp:')
-        qrcode.generate(qr, { small: true })
+        console.log('\n===== ESCANEA ESTE QR CON WHATSAPP =====\n')
+        console.log(qr) // Versión en línea simple
+        console.log('\n========================================\n')
+        qrcode.generate(qr, { small: true }) // También versión "bonita"
       }
 
       if (connection === 'open') {
@@ -38,15 +30,21 @@ async function connectBot() {
 
       if (connection === 'close') {
         const reason = lastDisconnect?.error?.output?.statusCode
-        console.log('Conexión cerrada. Razón:', reason)
 
         if (reason === DisconnectReason.loggedOut) {
-          console.log('Sesión cerrada desde el celular. Eliminando credenciales...')
+          console.log('Sesión cerrada desde el celular. Borrando credenciales y esperando nuevo QR...')
           fs.rmSync('./session', { recursive: true, force: true })
-          process.exit(0) // Evita bucles infinitos, requiere reinicio manual
+
+          // Reiniciar estado y reconectar
+          const newAuth = await useMultiFileAuthState('./session')
+          state = newAuth.state
+          saveCreds = newAuth.saveCreds
+          sock._qrShown = false
+          startSock()
         } else {
-          console.log('Reconectando en 5s...')
-          setTimeout(startSock, 5000)
+          console.log('Reconectando...')
+          sock._qrShown = false
+          startSock()
         }
       }
     })
@@ -71,7 +69,7 @@ async function connectBot() {
 
       const session = userSessions[from]
 
-      switch(session.step) {
+      switch (session.step) {
         case 0:
           session.data.consulta = text
           session.step++
@@ -82,10 +80,12 @@ async function connectBot() {
           session.step++
           await sock.sendMessage(from, { text: '¿Qué día y hora deseas tu cita?' })
           break
-        case 2: 
+        case 2:
           session.data.fechaHora = text
           session.step++
-          await sock.sendMessage(from, { text: `Perfecto, ${session.data.nombre}. Entonces tu solicitud es: "${session.data.consulta}" para ${session.data.fechaHora}.\n¿Es correcta la información? (sí/no)` })
+          await sock.sendMessage(from, {
+            text: `Perfecto, ${session.data.nombre}. Entonces tu solicitud es: "${session.data.consulta}" para ${session.data.fechaHora}.\n¿Es correcta la información? (sí/no)`
+          })
           break
         case 3:
           if (text.toLowerCase() === 'sí' || text.toLowerCase() === 'si') {
