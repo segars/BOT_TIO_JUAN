@@ -4,6 +4,7 @@
   "type": "module",
   "main": "s.js",
   "scripts": {
+    "start": "node s.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "engines": {
