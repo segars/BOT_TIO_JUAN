@@ -7,6 +7,7 @@ const { makeWASocket } = baileys
 async function connectBot() {
   let { state, saveCreds } = await useMultiFileAuthState('./session')
   let sock
+  let reconnecting = false
   const userSessions = {}
 
   const startSock = () => {
@@ -15,7 +16,6 @@ async function connectBot() {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
 
-      // Mostrar QR solo una vez
       if (qr && !sock._qrShown) {
         sock._qrShown = true
         console.log('Escanea este QR con WhatsApp:')
@@ -29,37 +29,30 @@ async function connectBot() {
       if (connection === 'close') {
         const reason = lastDisconnect?.error?.output?.statusCode
 
-        if (reason === DisconnectReason.loggedOut) {
-          // Ver cuántas conexiones (archivos de sesión) existen
-          const files = fs.readdirSync('./session').filter(f => f.endsWith('.json'))
+        if (!reconnecting) {
+          reconnecting = true
+          sock.end()
 
-          if (files.length > 1) {
-            console.log('Más de una sesión detectada. Eliminando credenciales y esperando nuevo QR...')
+          if (reason === DisconnectReason.loggedOut) {
+            console.log('Sesión cerrada desde el celular. Eliminando credenciales...')
             fs.rmSync('./session', { recursive: true, force: true })
-
-            // Re-inicializar estado y reconectar
             const newAuth = await useMultiFileAuthState('./session')
             state = newAuth.state
             saveCreds = newAuth.saveCreds
-            sock._qrShown = false
-            startSock()
-          } else {
-            console.log('Solo hay una sesión, no se eliminará.')
-            sock._qrShown = false
-            startSock()
           }
 
-        } else {
-          console.log('Reconectando...')
-          sock._qrShown = false
-          startSock()
+          console.log('Reconectando en 3 segundos...')
+          setTimeout(() => {
+            reconnecting = false
+            sock._qrShown = false
+            startSock()
+          }, 3000)
         }
       }
     })
 
     sock.ev.on('creds.update', saveCreds)
 
-    // Gestión de mensajes entrantes
     sock.ev.on('messages.upsert', async (m) => {
       const msg = m.messages[0]
       if (msg.key.fromMe) return
@@ -78,7 +71,7 @@ async function connectBot() {
 
       const session = userSessions[from]
 
-      switch(session.step) {
+      switch (session.step) {
         case 0:
           session.data.consulta = text
           session.step++
@@ -89,10 +82,12 @@ async function connectBot() {
           session.step++
           await sock.sendMessage(from, { text: '¿Qué día y hora deseas tu cita?' })
           break
-        case 2: 
+        case 2:
           session.data.fechaHora = text
           session.step++
-          await sock.sendMessage(from, { text: `Perfecto, ${session.data.nombre}. Entonces tu solicitud es: "${session.data.consulta}" para ${session.data.fechaHora}.\n¿Es correcta la información? (sí/no)` })
+          await sock.sendMessage(from, {
+            text: `Perfecto, ${session.data.nombre}. Entonces tu solicitud es: "${session.data.consulta}" para ${session.data.fechaHora}.\n¿Es correcta la información? (sí/no)`
+          })
           break
         case 3:
           if (text.toLowerCase() === 'sí' || text.toLowerCase() === 'si') {
@@ -103,6 +98,15 @@ async function connectBot() {
             userSessions[from] = { step: 0, data: {} }
           }
           break
+      }
+    })
+
+    // Manejo adicional si el WebSocket se cierra inesperadamente
+    sock.ws.on('close', () => {
+      if (!reconnecting) {
+        console.log('WebSocket cerrado inesperadamente, reiniciando...')
+        sock.end()
+        setTimeout(startSock, 5000)
       }
     })
   }
